@@ -310,6 +310,13 @@ pub struct Nrsc5App {
     /// Layout snapshot from the previous frame, used to detect tabs that
     /// were closed via the dock area's own "X" button.
     prev_layout: LayoutSnapshot,
+    /// Panels the user has popped out of the dock into their own
+    /// OS-level window (an egui "viewport") via the tab's right-click
+    /// menu. Rendered each frame by `render_popped_out_viewports`
+    /// instead of inside `DockArea`. Intentionally not persisted across
+    /// restarts — the app always starts with every panel docked, same as
+    /// before this feature existed.
+    popped_out: HashSet<DockTab>,
     /// 24-hour rolling song log. Survives restarts via RON file under
     /// `%LOCALAPPDATA%\nrsc5-studio\play-log.ron`.
     play_log: crate::play_log::PlayLog,
@@ -480,6 +487,7 @@ impl Nrsc5App {
             last_aas_prune_at: None,
             closed_tab_locations: HashMap::new(),
             prev_layout: LayoutSnapshot::default(),
+            popped_out: HashSet::new(),
             play_log: {
                 let mut log = crate::play_log::PlayLog::load();
                 log.set_retention_hours(play_log_retention_hours);
@@ -745,7 +753,7 @@ impl eframe::App for Nrsc5App {
                 }
                 ui.separator();
                 if ui.button("\u{21BA}  Reset Panel Layout").clicked() {
-                    self.dock_state = default_dock_state();
+                    self.reset_dock_layout();
                     ui.close_menu();
                 }
                 // Phase 3 (v0.4.0): expose the gain cache as a
@@ -811,15 +819,28 @@ impl eframe::App for Nrsc5App {
             ui.separator();
 
             // Panel toggle buttons. Selected state indicates the panel is
-            // currently open in the dock; clicking a closed panel restores it
-            // to its previous location (when possible), clicking an open one
-            // focuses it.
+            // currently open — either docked or popped out into its own
+            // window. Clicking a closed panel restores it to its previous
+            // dock location (when possible); clicking an open docked panel
+            // focuses it; clicking a popped-out panel brings its OS window
+            // to the front instead of re-docking it (that would leave two
+            // copies of the same panel rendering at once).
             for tab in DockTab::ALL {
-                let is_open = self.dock_state.find_tab(&tab).is_some();
+                let is_popped_out = self.popped_out.contains(&tab);
+                let is_open = is_popped_out || self.dock_state.find_tab(&tab).is_some();
                 let label = tab.toolbar_label();
-                let response = ui.selectable_label(is_open, label);
+                let mut response = ui.selectable_label(is_open, label);
+                if is_popped_out {
+                    response = response
+                        .on_hover_text("Open in its own window — click to bring it to front");
+                }
                 if response.clicked() {
-                    if let Some(loc) = self.dock_state.find_tab(&tab) {
+                    if is_popped_out {
+                        ui.ctx().send_viewport_cmd_to(
+                            popped_out_viewport_id(&tab),
+                            egui::ViewportCommand::Focus,
+                        );
+                    } else if let Some(loc) = self.dock_state.find_tab(&tab) {
                         let _ = self.dock_state.set_active_tab(loc);
                     } else {
                         self.reopen_tab(tab);
@@ -835,7 +856,7 @@ impl eframe::App for Nrsc5App {
                 .on_hover_text("Reset panel layout to default")
                 .clicked()
             {
-                self.dock_state = default_dock_state();
+                self.reset_dock_layout();
             }
 
             // Queue menu commands for processing in the existing dispatch
@@ -847,11 +868,13 @@ impl eframe::App for Nrsc5App {
         ui.separator();
 
         let mut commands = commands_from_top_bar;
+        let mut pop_out_requests: Vec<DockTab> = Vec::new();
         let mut viewer = DockViewer {
             app_state: &mut self.app_state,
             commands: &mut commands,
             presets: &self.config.presets,
             play_log: &self.play_log,
+            pop_out_requests: &mut pop_out_requests,
         };
         // Snapshot the layout before show_inside so we can detect tabs that
         // the user closes via the "X" button in this frame.
@@ -859,6 +882,20 @@ impl eframe::App for Nrsc5App {
         DockArea::new(&mut self.dock_state)
             .style(egui_dock::Style::from_egui(ui.style()))
             .show_inside(ui, &mut viewer);
+        // Apply any "Open in new window" requests queued via the tab
+        // context menu this frame. Removing the tab from the tree here —
+        // before the post-layout snapshot below — means `record_closures`
+        // treats a pop-out exactly like the user closing the tab's "X":
+        // its former leaf/surface neighbors are remembered, so
+        // `reopen_tab` (called when the pop-out window is later closed;
+        // see `render_popped_out_viewports`) redocks it back to
+        // (roughly) the same spot.
+        for tab in pop_out_requests {
+            if let Some(path) = self.dock_state.find_tab(&tab) {
+                self.dock_state.remove_tab(path);
+            }
+            self.popped_out.insert(tab);
+        }
         let post_layout = LayoutSnapshot::build(&self.dock_state);
         self.record_closures(&pre_layout, &post_layout);
         self.prev_layout = post_layout;
@@ -866,6 +903,13 @@ impl eframe::App for Nrsc5App {
         for command in commands {
             self.handle_command(command);
         }
+
+        // Render every panel the user has popped out into its own native
+        // OS window (egui "viewport"). Must run every frame a pop-out
+        // should keep existing, and after the dock area above so a tab
+        // that was *just* popped out this frame doesn't also flash inside
+        // the (now-stale) `viewer` borrow.
+        self.render_popped_out_viewports(ui.ctx());
 
         // Periodically refresh dock/layout bookkeeping.
         // (Audio session probing was removed in v0.4.0 — the cpal-backed
@@ -1028,6 +1072,104 @@ impl Nrsc5App {
 
         // 4) Last resort: focused leaf.
         self.dock_state.push_to_focused_leaf(tab);
+    }
+
+    /// Reset the dock to its curated default layout. Any panel currently
+    /// popped out into its own OS window is left alone (its window stays
+    /// open right where the user put it) and is pruned back out of the
+    /// fresh default tree so it doesn't end up rendered twice — once in
+    /// its window, once docked again as part of the reset layout.
+    fn reset_dock_layout(&mut self) {
+        self.dock_state = default_dock_state();
+        for tab in &self.popped_out {
+            if let Some(path) = self.dock_state.find_tab(tab) {
+                self.dock_state.remove_tab(path);
+            }
+        }
+    }
+
+    /// Draws every currently popped-out panel in its own native OS window
+    /// (an egui "viewport" — see the `egui::Context::show_viewport_*` docs).
+    /// Called once per frame; per egui's viewport contract a viewport only
+    /// keeps existing for as long as its `show_viewport_*` call keeps being
+    /// made every pass, so a tab that leaves `self.popped_out` simply stops
+    /// getting a window next frame.
+    ///
+    /// Uses `show_viewport_immediate` rather than `_deferred`: `_deferred`
+    /// requires a `Send + Sync + 'static` closure (so the integration can
+    /// re-invoke it on its own schedule), which doesn't fit a closure that
+    /// borrows `&mut self.app_state` directly the way `DockViewer` needs
+    /// to. `_immediate` runs synchronously inline instead, so the same
+    /// ordinary field borrows used for the main dock area work here too.
+    /// The tradeoff — the pop-out window repaints in lockstep with the
+    /// main window rather than independently — is a non-issue here since
+    /// the main window already repaints continuously while a stream is
+    /// running (`request_repaint_after` near the top of `ui`).
+    fn render_popped_out_viewports(&mut self, ctx: &egui::Context) {
+        if self.popped_out.is_empty() {
+            return;
+        }
+        // Snapshot the current set: the loop below removes entries (when a
+        // window is closed or its "Return to dock" button is clicked),
+        // which we can't do while iterating `self.popped_out` itself.
+        let tabs: Vec<DockTab> = self.popped_out.iter().cloned().collect();
+        let mut to_redock: Vec<DockTab> = Vec::new();
+
+        for mut tab in tabs {
+            let viewport_id = popped_out_viewport_id(&tab);
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("NRSC5 Studio \u{2014} {}", tab.toolbar_label()))
+                .with_inner_size([460.0, 380.0])
+                .with_min_inner_size([260.0, 180.0])
+                .with_icon(popped_out_window_icon());
+
+            let mut commands: Vec<UiCommand> = Vec::new();
+            let mut redock_requested = false;
+            // Popped-out windows don't offer a further "pop out" context
+            // menu action of their own, so this sink is write-only.
+            let mut unused_pop_out_requests: Vec<DockTab> = Vec::new();
+            let mut viewer = DockViewer {
+                app_state: &mut self.app_state,
+                commands: &mut commands,
+                presets: &self.config.presets,
+                play_log: &self.play_log,
+                pop_out_requests: &mut unused_pop_out_requests,
+            };
+
+            ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+                egui::TopBottomPanel::top(egui::Id::new((viewport_id, "popout_bar")))
+                    .show_inside(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("\u{21B1} Return to dock")
+                                .on_hover_text("Redock this panel into the main window")
+                                .clicked()
+                            {
+                                redock_requested = true;
+                            }
+                        });
+                    });
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    viewer.render_tab(ui, &mut tab);
+                });
+
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
+                    redock_requested = true;
+                }
+            });
+
+            for command in commands {
+                self.handle_command(command);
+            }
+            if redock_requested {
+                to_redock.push(tab);
+            }
+        }
+
+        for tab in to_redock {
+            self.popped_out.remove(&tab);
+            self.reopen_tab(tab);
+        }
     }
 
     /// Extend egui's default font fallback chain so glyphs that ship in
@@ -5068,6 +5210,27 @@ fn restore_art_history(
 /// keeps startup stable.
 /// eframe storage key under which the persisted dock layout is saved.
 const DOCK_LAYOUT_KEY: &str = "dock_layout";
+
+/// Stable viewport id for a panel popped out into its own OS window.
+/// Deriving it from the tab itself (rather than a counter) means the id
+/// is naturally stable across frames without any extra bookkeeping, and
+/// two different popped-out tabs can never collide.
+fn popped_out_viewport_id(tab: &DockTab) -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(("nrsc5-studio-popout", tab))
+}
+
+/// Window icon used for popped-out panel viewports. Rendering the icon
+/// (`icon::build_window_icon`) walks a vector definition and rasterizes
+/// it, which is cheap once but wasteful to redo every frame for every
+/// open pop-out window — `show_viewport_immediate` wants a fresh
+/// `ViewportBuilder` each call, so without this cache we'd re-rasterize
+/// on every repaint. Cached lazily on first use and cloned (cheap, just
+/// an `Arc` bump) after that.
+fn popped_out_window_icon() -> std::sync::Arc<egui::IconData> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| std::sync::Arc::new(crate::icon::build_window_icon()))
+        .clone()
+}
 
 /// Default dock layout — used on a fresh install and as the fallback
 /// whenever no saved layout is present (or a saved one fails to parse).
