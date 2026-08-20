@@ -31,18 +31,6 @@ To reattach it, click on the "Return to Dock" button:
 
 ---
 
-## Screenshots
-
-![NRSC5 Studio default layout](docs/screenshot01.png)
-
-*The default dock layout — Tuner, Now-Playing, Station Information, Spectrum, Constellation, Traffic, Weather, and the rolling Album-Art Collage all visible at once.*
-
-![NRSC5 Studio collage-focused layout](docs/screenshot02.png)
-
-*The egui-based dock is fully configurable: drag tabs into floating panes, close the ones you don't need, and feature the ones you do. Here the album-art collage takes center stage on a station that doesn't broadcast traffic or weather.*
-
----
-
 ## Features
 
 - **Full HD Radio playback** — **HD1–HD8** subchannel selection (the full HD Radio program range), with a **SIS-aware selector grid**: subchannels the station actually advertises light up at full intensity; the rest stay dimmed-but-clickable with a tooltip explaining the station doesn't list that program (you can still probe). Automatic retune on frequency change, persistent presets you can save, recall, rename, and re-target via a double-click edit dialog.
