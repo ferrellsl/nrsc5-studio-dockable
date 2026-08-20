@@ -127,7 +127,7 @@ Configs from earlier 0.2.x / 0.3.x releases that used `use_rtl_tcp = true` are m
 1. Download the latest `nrsc5-studio-portable.zip` from the Releases page.
 2. Unzip it anywhere — `Documents`, `Program Files`, a USB stick, wherever.
 3. Plug in your RTL-SDR dongle.
-4. Run `nrsc5-studio.exe`.
+4. Run `nrsc5-studio-dockable.exe`.
 
 No installer, no registry edits, no admin rights required.
 
@@ -152,7 +152,7 @@ It's a pure drop-in upgrade: the app prefers `map2x.png` when it's present and s
 
 1. Download `map2x.png` from the [Releases page](https://github.com/LTCAshraven/nrsc5-studio/releases) assets (listed alongside the portable zip and Linux packages).
 2. Put it where the app looks for basemaps:
-   - **Windows (portable):** the `res\` folder next to `nrsc5-studio.exe` (i.e. `res\map2x.png`).
+   - **Windows (portable):** the `res\` folder next to `nrsc5-studio-dockable.exe` (i.e. `res\map2x.png`).
    - **Linux (.deb / .rpm):** `/usr/share/nrsc5-studio/map2x.png`.
 3. Restart NRSC5 Studio. The maps now render against the high-resolution basemap.
 
@@ -184,7 +184,7 @@ Every tune writes a short, human-readable trace of the closed-loop AGC's reasoni
 
 Location:
 
-- **Portable** (default for the released zip): `data\agc-trace.log` beside `nrsc5-studio.exe`.
+- **Portable** (default for the released zip): `data\agc-trace.log` beside `nrsc5-studio-dockable.exe`.
 - **Installed** (no `portable.txt` marker): `%LOCALAPPDATA%\nrsc5-studio\agc-trace.log`.
 
 Tail it live from PowerShell while tuning:
