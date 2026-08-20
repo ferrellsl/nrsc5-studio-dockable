@@ -8,6 +8,18 @@
 
 A native Windows and Linux desktop app for listening to **HD Radio** broadcasts with an RTL-SDR, SDRplay, or HackRF receiver. Built in Rust with [egui](https://www.egui.rs/), wrapped around the excellent [`nrsc5`](https://github.com/theori-io/nrsc5) HD Radio decoder.
 
+This fork of NRSC5-Studio supports OS-Level, dockable windows that can be moved anywhere outside of the main application, including separate displays. To create a detachable window, just right-click on the tab of any window and you'll see a drop-down context menu that says "Open in New Window".
+
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/275c376b-089b-4d43-bfaf-cd6c7e5150c0" />
+
+This window can be dragged to any location including another display.
+
+To reattach it, click on the "Return to Dock" button:
+
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/c9607fcf-18c9-4c46-82f7-9628815772fb" />
+
+
+
 ![Stars](https://img.shields.io/github/stars/LTCAshraven/nrsc5-studio?style=flat-square)
 ![Forks](https://img.shields.io/github/forks/LTCAshraven/nrsc5-studio?style=flat-square)
 ![Watchers](https://img.shields.io/github/watchers/LTCAshraven/nrsc5-studio?style=flat-square)
