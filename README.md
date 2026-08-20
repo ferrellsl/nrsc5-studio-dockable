@@ -19,11 +19,6 @@ To reattach it, click on the "Return to Dock" button:
 <img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/c9607fcf-18c9-4c46-82f7-9628815772fb" />
 
 
-
-![Stars](https://img.shields.io/github/stars/LTCAshraven/nrsc5-studio?style=flat-square)
-![Forks](https://img.shields.io/github/forks/LTCAshraven/nrsc5-studio?style=flat-square)
-![Watchers](https://img.shields.io/github/watchers/LTCAshraven/nrsc5-studio?style=flat-square)
-
 ![Version](https://img.shields.io/badge/version-0.6.5-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey?style=flat-square)
