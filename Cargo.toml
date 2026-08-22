@@ -80,6 +80,17 @@ rfd = { version = "0.17", default-features = false }
 # `Win32_System_Com`, `Win32_System_Com_StructuredStorage`,
 # `Win32_System_Variant`, and `Win32_UI_Shell_PropertiesSystem`, all
 # transitively unused after winaudio went away.
+#
+# v0.6.6 briefly added `windows-sys` for a `detach_popout_window_owner`
+# helper that cleared GWLP_HWNDPARENT on popped-out panel windows, on the
+# theory that Win32's owned-window minimize/restore cascade was why
+# minimizing the main window dragged every pop-out down with it. That
+# theory turned out to be wrong (confirmed by reading eframe/egui-winit/
+# winit's own window-creation code: neither ever sets an owner or parent
+# on these windows) and the helper was a no-op; the real cause and fix
+# are documented on `render_popped_out_viewports` in `app.rs` (switching
+# pop-outs from `show_viewport_immediate` to `_deferred`), which needed no
+# Win32 API access at all. Removed again along with that helper.
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
