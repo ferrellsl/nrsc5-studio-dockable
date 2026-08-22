@@ -1,19 +1,16 @@
-# Default build target on Windows. On Linux the host triple is used
-# automatically; this key is ignored when cargo detects a non-Windows host.
 [target.x86_64-pc-windows-gnullvm]
 linker = ".toolchains/llvm-mingw-20260505-ucrt-x86_64/bin/x86_64-w64-mingw32-clang.exe"
 ar = ".toolchains/llvm-mingw-20260505-ucrt-x86_64/bin/llvm-ar.exe"
+rustflags = [
+    "-Clink-arg=--sysroot=.toolchains/llvm-mingw-20260505-ucrt-x86_64/x86_64-w64-mingw32",
+    "-Clink-arg=.toolchains/llvm-mingw-20260505-ucrt-x86_64/x86_64-w64-mingw32/lib/libmingw32.a",
+    "-Clink-arg=.toolchains/llvm-mingw-20260505-ucrt-x86_64/x86_64-w64-mingw32/lib/libmingwex.a",
+    "-Clink-arg=-Wl,--allow-multiple-definition",
+]
 
-# Windows-only env vars for build scripts (soapysdr-sys pkg-config,
-# bindgen libclang). Scoped to the Windows gnullvm target so these
-# absolute MSYS2 paths are NOT inherited by Linux builds.
 [target.x86_64-pc-windows-gnullvm.env]
-# Absolute path to the pkg-config binary.
 PKG_CONFIG = "C:\\msys64\\mingw64\\bin\\pkg-config.exe"
-# Directory containing SoapySDR.pc and other MSYS2-installed .pc files.
 PKG_CONFIG_PATH = "C:\\msys64\\mingw64\\lib\\pkgconfig"
-# Emit system -L/-I flags so the linker finds libSoapySDR.dll.a.
 PKG_CONFIG_ALLOW_SYSTEM_LIBS = "1"
 PKG_CONFIG_ALLOW_SYSTEM_CFLAGS = "1"
-# Directory containing libclang.dll for bindgen (soapysdr-sys dependency).
 LIBCLANG_PATH = "C:\\msys64\\mingw64\\bin"
