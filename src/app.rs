@@ -317,6 +317,24 @@ pub struct Nrsc5App {
     /// restarts — the app always starts with every panel docked, same as
     /// before this feature existed.
     popped_out: HashSet<DockTab>,
+    /// Shared with every currently popped-out panel's deferred viewport
+    /// closure; see `PopoutState`. `None` whenever `popped_out` is empty —
+    /// dropped by `render_popped_out_viewports` as soon as the last
+    /// pop-out is redocked/closed so we're never holding a stale clone of
+    /// `app_state` for no reason.
+    popout_state: Option<std::sync::Arc<std::sync::Mutex<PopoutState>>>,
+    /// Commands a popped-out panel's deferred viewport queued (button
+    /// clicks, slider drags, etc.), drained and dispatched through
+    /// `handle_command` in `render_popped_out_viewports` — same path
+    /// docked-tab commands go through.
+    popout_commands_tx: crossbeam_channel::Sender<UiCommand>,
+    popout_commands_rx: crossbeam_channel::Receiver<UiCommand>,
+    /// One flag per currently popped-out tab, shared with that tab's
+    /// deferred viewport closure. The closure can't reach `self` to
+    /// remove itself from `popped_out`, so it just sets this (on "Return
+    /// to dock" or the native window's close button); `popped_out` is
+    /// removed and `reopen_tab` called from `render_popped_out_viewports`.
+    popout_redock_flags: HashMap<DockTab, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// 24-hour rolling song log. Survives restarts via RON file under
     /// `%LOCALAPPDATA%\nrsc5-studio\play-log.ron`.
     play_log: crate::play_log::PlayLog,
@@ -432,6 +450,8 @@ impl Nrsc5App {
         // moved into the struct literal below.
         let play_log_retention_hours = config.play_log_retention_hours;
 
+        let (popout_commands_tx, popout_commands_rx) = crossbeam_channel::unbounded();
+
         let mut app = Self {
             app_state: AppState {
                 frequency_mhz: config.frequency_mhz,
@@ -488,6 +508,10 @@ impl Nrsc5App {
             closed_tab_locations: HashMap::new(),
             prev_layout: LayoutSnapshot::default(),
             popped_out: HashSet::new(),
+            popout_state: None,
+            popout_commands_tx,
+            popout_commands_rx,
+            popout_redock_flags: HashMap::new(),
             play_log: {
                 let mut log = crate::play_log::PlayLog::load();
                 log.set_retention_hours(play_log_retention_hours);
@@ -511,6 +535,30 @@ impl Nrsc5App {
 impl eframe::App for Nrsc5App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         _visuals.panel_fill.to_normalized_gamma_f32()
+    }
+
+    /// eframe calls this every pass, whether or not the root viewport is
+    /// currently visible -- unlike `ui`/`update` below, which eframe skips
+    /// entirely whenever the root window is invisible (e.g. minimized on
+    /// Windows; see `epi_integration::update` in eframe, which gates both
+    /// behind `if is_visible`). `render_popped_out_viewports` has to run on
+    /// *every* pass regardless, because a deferred viewport is pruned by
+    /// egui's own bookkeeping the moment a pass of its parent (the root
+    /// viewport) completes without re-declaring it via
+    /// `show_viewport_deferred`. Calling it only from `ui` (as the first
+    /// version of this fix did) meant that as soon as the main window was
+    /// minimized, `ui` stopped running, the pop-outs stopped being
+    /// re-declared, and the very next housekeeping pass eframe forces for
+    /// an invisible root window (to keep processing viewport commands) tore
+    /// every pop-out down -- rebuilt from scratch, as brand-new native
+    /// windows, once the main window came back. That's what still looked
+    /// like "pop-outs minimize with the main window" even after switching
+    /// to deferred viewports. Registering a deferred viewport here doesn't
+    /// violate `logic`'s "no UI/painting" rule: it only stores a builder +
+    /// callback for egui to invoke later, on that viewport's own pass; no
+    /// painting happens in this call itself.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.render_popped_out_viewports(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -904,12 +952,14 @@ impl eframe::App for Nrsc5App {
             self.handle_command(command);
         }
 
-        // Render every panel the user has popped out into its own native
-        // OS window (egui "viewport"). Must run every frame a pop-out
-        // should keep existing, and after the dock area above so a tab
-        // that was *just* popped out this frame doesn't also flash inside
-        // the (now-stale) `viewer` borrow.
-        self.render_popped_out_viewports(ui.ctx());
+        // Pop-out viewports are (re-)declared from `App::logic` now, not
+        // here -- `logic` runs every pass even while the root window is
+        // invisible/minimized, which `ui` does not (see the doc comment on
+        // `logic` above and on `render_popped_out_viewports`). A tab
+        // popped out via the dock area above (`pop_out_requests`, handled
+        // a few lines up) is added to `self.popped_out` in time for the
+        // *next* pass's `logic` call to pick it up -- one frame of lag
+        // before its native window appears, which is imperceptible.
 
         // Periodically refresh dock/layout bookkeeping.
         // (Audio session probing was removed in v0.4.0 — the cpal-backed
@@ -1090,84 +1140,205 @@ impl Nrsc5App {
 
     /// Draws every currently popped-out panel in its own native OS window
     /// (an egui "viewport" — see the `egui::Context::show_viewport_*` docs).
-    /// Called once per frame; per egui's viewport contract a viewport only
-    /// keeps existing for as long as its `show_viewport_*` call keeps being
-    /// made every pass, so a tab that leaves `self.popped_out` simply stops
-    /// getting a window next frame.
+    /// Called once per pass from `App::logic` (not `App::ui` — see the doc
+    /// comment there for why that distinction matters); per egui's viewport
+    /// contract a viewport only keeps existing for as long as its
+    /// `show_viewport_*` call keeps being made every pass, so a tab that
+    /// leaves `self.popped_out` simply stops getting a window next frame.
     ///
-    /// Uses `show_viewport_immediate` rather than `_deferred`: `_deferred`
-    /// requires a `Send + Sync + 'static` closure (so the integration can
-    /// re-invoke it on its own schedule), which doesn't fit a closure that
-    /// borrows `&mut self.app_state` directly the way `DockViewer` needs
-    /// to. `_immediate` runs synchronously inline instead, so the same
-    /// ordinary field borrows used for the main dock area work here too.
-    /// The tradeoff — the pop-out window repaints in lockstep with the
-    /// main window rather than independently — is a non-issue here since
-    /// the main window already repaints continuously while a stream is
-    /// running (`request_repaint_after` near the top of `ui`).
+    /// Uses `show_viewport_deferred`, not `_immediate`. This used to be
+    /// `_immediate` (simpler: its closure can borrow `&mut self.app_state`
+    /// directly, the way `DockViewer` normally works), on the theory that
+    /// the pop-out repainting "in lockstep" with the main window — the
+    /// documented tradeoff of `_immediate` — was a non-issue since the main
+    /// window already repaints continuously via `request_repaint_after`
+    /// near the top of `ui`. That theory was wrong in a way that mattered:
+    /// "in lockstep" doesn't just mean "repaints together", it means a
+    /// pop-out is *incapable* of repainting itself at all — every repaint
+    /// of an immediate viewport is really the main window's own `ui()`
+    /// running again from scratch (see the doc comment on
+    /// `render_immediate_viewport` in eframe's `wgpu_integration.rs`).
+    /// Windows stops delivering paint messages to a minimized window
+    /// entirely (this is standard, documented Win32 behavior, not
+    /// something egui/winit can route around), so the instant the main
+    /// window is minimized, its `ui()` stops running — and every popped-out
+    /// panel, unable to repaint on its own, gets torn down by egui's own
+    /// "viewport wasn't re-declared this pass" bookkeeping and rebuilt from
+    /// scratch (new native window, default position) once the main window
+    /// is restored. That's what looked like "pop-outs minimize with the
+    /// main window and have to be reopened" — confirmed directly with a
+    /// diagnostic script watching the live windows across a minimize.
+    ///
+    /// A deferred viewport's stored callback is invoked directly by its
+    /// *own* native repaint messages, entirely independent of whether the
+    /// main window's `ui()` is currently running (see `epi_integration::update`
+    /// in eframe: a deferred viewport's callback runs standalone, the host
+    /// `App::update`/`ui` methods are not involved at all) — so a popped-out
+    /// panel now keeps itself alive and responsive even while the main
+    /// window is minimized. The cost is the `Send + Sync + 'static` bound
+    /// on that callback, which rules out borrowing `&mut self.app_state`
+    /// directly; see `PopoutState` for how that's bridged.
     fn render_popped_out_viewports(&mut self, ctx: &egui::Context) {
         if self.popped_out.is_empty() {
+            // Nothing to show. Drop any previously-shared snapshot so we
+            // aren't holding a stale clone (and skip refreshing it below)
+            // once every pop-out has been redocked or closed.
+            self.popout_state = None;
             return;
         }
+
+        // Every deferred pop-out closure below reads through this shared,
+        // thread-safe snapshot instead of borrowing `self` directly (which
+        // its `Send + Sync + 'static` bound rules out — see `PopoutState`).
+        // Refreshed from the live state every time we get here so a
+        // pop-out repainting on its own schedule — in particular: while
+        // continuing to repaint on its own during the very window where
+        // the main viewport is minimized and this function isn't running
+        // at all — still sees reasonably fresh data from the last time it
+        // was.
+        if self.popout_state.is_none() {
+            self.popout_state = Some(std::sync::Arc::new(std::sync::Mutex::new(PopoutState {
+                app_state: self.app_state.clone(),
+                presets: self.config.presets.clone(),
+                play_log: self.play_log.clone(),
+            })));
+        }
+        let popout_state = self.popout_state.as_ref().unwrap().clone();
+        {
+            let mut snapshot = popout_state.lock().unwrap();
+            snapshot.app_state = self.app_state.clone();
+            snapshot.presets = self.config.presets.clone();
+            snapshot.play_log = self.play_log.clone();
+        }
+
         // Snapshot the current set: the loop below removes entries (when a
         // window is closed or its "Return to dock" button is clicked),
         // which we can't do while iterating `self.popped_out` itself.
         let tabs: Vec<DockTab> = self.popped_out.iter().cloned().collect();
         let mut to_redock: Vec<DockTab> = Vec::new();
 
-        for mut tab in tabs {
+        for tab in tabs {
             let viewport_id = popped_out_viewport_id(&tab);
+            let title = format!("NRSC5 Studio \u{2014} {}", tab.toolbar_label());
             let builder = egui::ViewportBuilder::default()
-                .with_title(format!("NRSC5 Studio \u{2014} {}", tab.toolbar_label()))
+                .with_title(title)
                 .with_inner_size([460.0, 380.0])
                 .with_min_inner_size([260.0, 180.0])
                 .with_icon(popped_out_window_icon());
 
-            let mut commands: Vec<UiCommand> = Vec::new();
-            let mut redock_requested = false;
-            // Popped-out windows don't offer a further "pop out" context
-            // menu action of their own, so this sink is write-only.
-            let mut unused_pop_out_requests: Vec<DockTab> = Vec::new();
-            let mut viewer = DockViewer {
-                app_state: &mut self.app_state,
-                commands: &mut commands,
-                presets: &self.config.presets,
-                play_log: &self.play_log,
-                pop_out_requests: &mut unused_pop_out_requests,
-            };
+            // One "please redock/close me" flag per popped-out tab, shared
+            // with that tab's deferred closure (which can't reach `self`
+            // to remove itself from `self.popped_out` directly). Checked
+            // and cleared below on the same pass it's set on, so a click
+            // is never missed even though the closure that set it and the
+            // code that reads it may run on different native repaints.
+            let redock_flag = self
+                .popout_redock_flags
+                .entry(tab.clone())
+                .or_insert_with(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+                .clone();
+            if redock_flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                to_redock.push(tab.clone());
+                // Fall through and still declare the viewport this one
+                // last pass — same as the old immediate version did —
+                // rather than yanking it a pass early. It stops getting a
+                // window next frame once removed from `self.popped_out`
+                // below.
+            }
 
-            ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
-                egui::TopBottomPanel::top(egui::Id::new((viewport_id, "popout_bar")))
-                    .show_inside(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("\u{21B1} Return to dock")
-                                .on_hover_text("Redock this panel into the main window")
-                                .clicked()
-                            {
-                                redock_requested = true;
-                            }
+            let popout_state_for_closure = std::sync::Arc::clone(&popout_state);
+            let commands_tx = self.popout_commands_tx.clone();
+            let redock_flag_for_closure = std::sync::Arc::clone(&redock_flag);
+            let tab_for_closure = tab.clone();
+
+            ctx.show_viewport_deferred(viewport_id, builder, move |ui, _class| {
+                // Pop-outs no longer inherit the main window's continuous
+                // repaint "for free" (that was the immediate-viewport
+                // coupling we just got rid of) — ask for our own, same
+                // cadence the main window already uses near the top of
+                // `ui()`, so animated content (weather auto-advance, the
+                // spectrum waterfall, etc.) keeps moving while popped out.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+
+                let mut commands: Vec<UiCommand> = Vec::new();
+                // Popped-out windows don't offer a further "pop out"
+                // context menu action of their own, so this sink is
+                // write-only.
+                let mut unused_pop_out_requests: Vec<DockTab> = Vec::new();
+                let mut tab = tab_for_closure.clone();
+
+                {
+                    let mut snapshot = popout_state_for_closure.lock().unwrap();
+                    // Destructured first rather than borrowing
+                    // `snapshot.field` inline in the struct literal below:
+                    // going through `MutexGuard`'s `Deref`/`DerefMut` hides
+                    // field disjointness from the borrow checker, so
+                    // `app_state: &mut snapshot.app_state` alongside
+                    // `presets: &snapshot.presets` doesn't compile without
+                    // this — matching `&mut *snapshot` up front gets plain
+                    // field borrows the checker can see are disjoint.
+                    let PopoutState {
+                        app_state,
+                        presets,
+                        play_log,
+                    } = &mut *snapshot;
+                    let mut viewer = DockViewer {
+                        app_state,
+                        commands: &mut commands,
+                        presets: presets.as_slice(),
+                        play_log,
+                        pop_out_requests: &mut unused_pop_out_requests,
+                    };
+
+                    egui::TopBottomPanel::top(egui::Id::new((viewport_id, "popout_bar")))
+                        .show_inside(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button("\u{21B1} Return to dock")
+                                    .on_hover_text("Redock this panel into the main window")
+                                    .clicked()
+                                {
+                                    redock_flag_for_closure
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            });
                         });
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        viewer.render_tab(ui, &mut tab);
                     });
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    viewer.render_tab(ui, &mut tab);
-                });
+                    // `snapshot`'s lock is released here, before the
+                    // channel send below — nothing after this point needs
+                    // the shared state.
+                }
 
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
-                    redock_requested = true;
+                    redock_flag_for_closure.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+
+                if !commands.is_empty() {
+                    for command in commands {
+                        let _ = commands_tx.send(command);
+                    }
+                    // Commands only take effect once the main window's
+                    // `render_popped_out_viewports` drains this channel, so
+                    // nudge it awake promptly instead of waiting for its
+                    // own next scheduled repaint.
+                    ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
                 }
             });
+        }
 
-            for command in commands {
-                self.handle_command(command);
-            }
-            if redock_requested {
-                to_redock.push(tab);
-            }
+        // Apply anything a pop-out's (possibly independently-timed) redraw
+        // queued above, through the same `handle_command` path docked tabs
+        // use.
+        while let Ok(command) = self.popout_commands_rx.try_recv() {
+            self.handle_command(command);
         }
 
         for tab in to_redock {
             self.popped_out.remove(&tab);
+            self.popout_redock_flags.remove(&tab);
             self.reopen_tab(tab);
         }
     }
@@ -5219,11 +5390,34 @@ fn popped_out_viewport_id(tab: &DockTab) -> egui::ViewportId {
     egui::ViewportId::from_hash_of(("nrsc5-studio-popout", tab))
 }
 
+/// Shared, thread-safe mirror of the pieces `DockViewer` needs to render a
+/// panel, refreshed from the live `Nrsc5App` fields once per frame in
+/// `render_popped_out_viewports`. Exists solely so a popped-out panel can
+/// be rendered as an egui *deferred* viewport: a deferred viewport's
+/// callback must be `Send + Sync + 'static` (so eframe can invoke it on
+/// its own schedule, independent of the main window), which rules out the
+/// direct `&mut self.app_state` / `&self.config.presets` / `&self.play_log`
+/// borrows `DockViewer` normally uses.
+///
+/// A full clone of `AppState` once per frame is the simplest correct
+/// bridge here rather than something more surgical (e.g. per-tab partial
+/// snapshots): every field in it is already plain, cheaply-clonable data —
+/// several (`AgcSnapshot`, `SpectrumTap`) are explicitly documented
+/// elsewhere as "safe to clone into UI threads" for exactly this kind of
+/// reason — and it costs nothing on the overwhelming majority of frames,
+/// where `self.popped_out` is empty and `render_popped_out_viewports`
+/// returns before ever touching this.
+struct PopoutState {
+    app_state: AppState,
+    presets: Vec<crate::config::Preset>,
+    play_log: crate::play_log::PlayLog,
+}
+
 /// Window icon used for popped-out panel viewports. Rendering the icon
 /// (`icon::build_window_icon`) walks a vector definition and rasterizes
 /// it, which is cheap once but wasteful to redo every frame for every
-/// open pop-out window — `show_viewport_immediate` wants a fresh
-/// `ViewportBuilder` each call, so without this cache we'd re-rasterize
+/// open pop-out window — `render_popped_out_viewports` builds a fresh
+/// `ViewportBuilder` each pass, so without this cache we'd re-rasterize
 /// on every repaint. Cached lazily on first use and cloned (cheap, just
 /// an `Arc` bump) after that.
 fn popped_out_window_icon() -> std::sync::Arc<egui::IconData> {

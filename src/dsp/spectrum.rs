@@ -67,6 +67,15 @@ const DB_CEIL: f32 = -10.0;
 /// Shared snapshot returned to the panel each paint. All fields share
 /// the same generation counter so the panel can detect new data and
 /// skip work when nothing has changed.
+///
+/// `Clone` is used by `app.rs::render_popped_out_viewports` to hand a
+/// popped-out Spectrum panel's deferred viewport an independent copy each
+/// frame (needed there because that closure must be `Send + Sync +
+/// 'static`). That clone only happens on frames where at least one panel
+/// is popped out, so it doesn't undermine this struct's own
+/// no-per-paint-allocation design for the common (nothing popped out)
+/// case.
+#[derive(Clone)]
 pub struct SpectrumSnapshot {
     /// Latest spectrum, in dBFS, fft-shifted so index 0 is the lowest
     /// (most-negative) frequency and `FFT_SIZE - 1` is the highest.

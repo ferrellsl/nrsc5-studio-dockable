@@ -119,7 +119,13 @@ impl ProgramRuntime {
     }
 }
 
-#[derive(Default)]
+/// `Clone` exists so `app.rs::render_popped_out_viewports` can hand a
+/// popped-out panel's deferred viewport a cheap, independent snapshot
+/// instead of a live borrow (that closure has to be `Send + Sync +
+/// 'static`, which rules out `&mut AppState` directly). Every field here
+/// is plain data or an already-clone-cheap handle (`egui::TextureHandle`,
+/// `SpectrumTap`) for exactly that kind of reason.
+#[derive(Default, Clone)]
 pub struct AppState {
     pub frequency_mhz: f32,
     pub selected_program: u32,

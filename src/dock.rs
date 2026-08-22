@@ -355,7 +355,7 @@ pub struct DockViewer<'a> {
     /// out into their own OS-level window this frame. `Nrsc5App::ui` drains
     /// this after `DockArea::show_inside` returns, removing the tab from
     /// the dock tree and handing its rendering off to a native
-    /// `egui::Context::show_viewport_deferred` window instead — see
+    /// `egui::Context::show_viewport_immediate` window instead — see
     /// `Nrsc5App::render_popped_out_viewports`.
     pub pop_out_requests: &'a mut Vec<DockTab>,
 }

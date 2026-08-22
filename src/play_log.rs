@@ -64,7 +64,12 @@ struct OnDiskFormat {
     entries: Vec<PlayEntry>,
 }
 
-#[derive(Debug, Default)]
+/// `Clone` is used by `app.rs::render_popped_out_viewports` to hand a
+/// popped-out Log panel's deferred viewport an independent snapshot each
+/// frame (that closure must be `Send + Sync + 'static`, which rules out a
+/// direct `&PlayLog` borrow). `entries` is capped by `prune`/retention, so
+/// this stays cheap.
+#[derive(Debug, Default, Clone)]
 pub struct PlayLog {
     entries: VecDeque<PlayEntry>,
     /// Active retention window in hours. Defaults to
