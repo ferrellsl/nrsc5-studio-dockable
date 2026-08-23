@@ -91,6 +91,15 @@ rfd = { version = "0.17", default-features = false }
 # are documented on `render_popped_out_viewports` in `app.rs` (switching
 # pop-outs from `show_viewport_immediate` to `_deferred`), which needed no
 # Win32 API access at all. Removed again along with that helper.
+#
+# Re-added in v0.6.7 for `disable_background_power_throttling` in
+# `main.rs` (`SetProcessInformation` / `PROCESS_POWER_THROTTLING_STATE`):
+# a pop-out panel's own repaint scheduling froze while the main window
+# was minimized (but not merely covered), which turned out to be Windows'
+# own background-process power throttling, not anything reachable from
+# egui/winit/wgpu -- see that function's doc comment for the full
+# diagnosis. Only the `Win32_System_Threading` feature is needed.
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
