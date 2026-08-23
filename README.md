@@ -8,33 +8,15 @@
 
 A native Windows and Linux desktop app for listening to **HD Radio** broadcasts with an RTL-SDR, SDRplay, or HackRF receiver. Built in Rust with [egui](https://www.egui.rs/), wrapped around the excellent [`nrsc5`](https://github.com/theori-io/nrsc5) HD Radio decoder.
 
-![Stars](https://img.shields.io/github/stars/LTCAshraven/nrsc5-studio?style=flat-square)
-![Forks](https://img.shields.io/github/forks/LTCAshraven/nrsc5-studio?style=flat-square)
-![Watchers](https://img.shields.io/github/watchers/LTCAshraven/nrsc5-studio?style=flat-square)
+This fork of NRSC5 Studio provides the user with detachable viewports that can be moved anywhere on the screen or even onto a different display monitor.  To detach a viewport window from the main application, right-click on its tab and a context menu will appear.  Select "Open in a New Window". You can now move this window anywhere.  To reattach the window(s) to the main viewport, click on "Return to Dock".  All windows, including the main viewport can be moved, minimized or maximized independently of one another.
 
-![Version](https://img.shields.io/badge/version-0.6.5-blue?style=flat-square)
-![License](https://img.shields.io/badge/license-GPL--3.0-green?style=flat-square)
-![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey?style=flat-square)
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/1c18edce-2bf5-4aa6-94aa-ce507a6993f9" />
 
-**[📖 Quick Start](#quick-start)** • **[✨ Features](#features)** • **[📡 Hardware](#hardware-requirements)** • **[🔧 Building](#building-from-source)** • **[📥 Install](#install-portable)**
 
-<sub>If you find this project useful, please consider giving it a [star on GitHub](https://github.com/LTCAshraven/nrsc5-studio) — it helps others discover it and keeps the feedback and development flowing! ⭐</sub>
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/968ec28f-17cf-4554-b971-7841b746ad4b" />
 
-</div>
 
----
 
-## Screenshots
-
-![NRSC5 Studio default layout](docs/screenshot01.png)
-
-*The default dock layout — Tuner, Now-Playing, Station Information, Spectrum, Constellation, Traffic, Weather, and the rolling Album-Art Collage all visible at once.*
-
-![NRSC5 Studio collage-focused layout](docs/screenshot02.png)
-
-*The egui-based dock is fully configurable: drag tabs into floating panes, close the ones you don't need, and feature the ones you do. Here the album-art collage takes center stage on a station that doesn't broadcast traffic or weather.*
-
----
 
 ## Features
 
