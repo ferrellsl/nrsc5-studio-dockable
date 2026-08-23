@@ -24,6 +24,13 @@ mod sdr_detect;
 mod station_info;
 
 fn main() -> eframe::Result<()> {
+    // Opt out of Windows' background execution-speed throttling before
+    // anything else runs -- see `disable_background_power_throttling`'s
+    // doc comment for why a pop-out panel window needs this even though
+    // it's visible and un-minimized in its own right.
+    #[cfg(target_os = "windows")]
+    disable_background_power_throttling();
+
     // Self-locate bundled native DLLs so the user never has to
     // shell-set PATH or SOAPY_SDR_PLUGIN_PATH. In a portable install
     // (or a `cargo run` from the repo root) the layout is:
@@ -146,5 +153,77 @@ fn install_bundled_dll_paths() {
         unsafe {
             std::env::set_var("SOAPY_SDR_PLUGIN_PATH", modules.as_os_str());
         }
+    }
+}
+
+/// Opts this process out of Windows' automatic background execution-speed
+/// throttling ("Efficiency Mode" / EcoQoS), via `SetProcessInformation` +
+/// `PROCESS_POWER_THROTTLING_EXECUTION_SPEED`.
+///
+/// Root cause of a bug where a popped-out panel (e.g. the Weather radar
+/// animation) would completely freeze — no repaints, no backend event
+/// draining — while the main window was minimized, but *not* while it was
+/// merely covered by another window. Both cases leave the pop-out's own
+/// native window fully visible and un-minimized in its own right, and
+/// eframe schedules that window's repaints independently of the main
+/// window (see the doc comments on `Nrsc5App::render_popped_out_viewports`
+/// and `App::logic` in `app.rs`, which already fixed the *scheduling*
+/// side of this). Confirmed experimentally: covering the main window with
+/// another window (never minimizing it) let the pop-out keep updating
+/// live and the animation start on its own once enough frames existed;
+/// only *minimizing* the main window froze it, and only until the user
+/// interacted with the pop-out window in a way that forced a synchronous
+/// repaint (e.g. resizing it) — clicking into it for plain focus was not
+/// enough.
+///
+/// That pattern — frozen only once the process's own main/representative
+/// window goes iconic, unrelated to whether some other window of the same
+/// process is visible, and not released by mere focus — matches Windows'
+/// process-level power throttling, not anything egui/winit/wgpu expose a
+/// per-window knob for: once Windows decides a process is "backgrounded"
+/// (a determination it appears to key off the main window's iconic state,
+/// not each window's individual visibility), it can coarsen that
+/// process's *entire* thread scheduling and timer resolution, which is
+/// enough to stall the winit event loop's scheduled wake-ups for a
+/// pop-out's own repaint timer even though that window is still on
+/// screen. This call tells Windows not to do that for this process.
+///
+/// Best-effort and silent: if this fails (e.g. an older Windows version
+/// without this throttling mechanism at all), the process behaves exactly
+/// as it did before this function existed -- there's no regression from
+/// trying and failing, only a missed opportunity to opt out.
+#[cfg(target_os = "windows")]
+fn disable_background_power_throttling() {
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+        ProcessPowerThrottling, SetProcessInformation,
+    };
+
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        // 0 under `ControlMask`'s corresponding bit means "do not throttle
+        // this aspect" -- we're declaring an *opinion* about execution
+        // speed throttling (via ControlMask), and that opinion is "off"
+        // (via StateMask leaving the bit clear).
+        StateMask: 0,
+    };
+
+    // SAFETY: `state` is a plain `#[repr(C)]` struct whose fields exactly
+    // match `PROCESS_POWER_THROTTLING_STATE`'s documented layout, passed
+    // by pointer with its own exact size -- satisfying
+    // `SetProcessInformation`'s contract. `GetCurrentProcess()` returns a
+    // pseudo-handle (always valid, never needs closing). Ignoring the
+    // return value is deliberate: a failed call just leaves the
+    // pre-existing (already-shipping) throttled behavior in place rather
+    // than causing any new failure mode.
+    unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            &state as *const PROCESS_POWER_THROTTLING_STATE as *const core::ffi::c_void,
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        );
     }
 }

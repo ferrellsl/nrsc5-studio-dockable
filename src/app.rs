@@ -558,143 +558,11 @@ impl eframe::App for Nrsc5App {
     /// callback for egui to invoke later, on that viewport's own pass; no
     /// painting happens in this call itself.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.process_backend_updates(ctx);
         self.render_popped_out_viewports(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.update_runtime_metrics();
-        self.drain_sdr_refresh_results();
-        ui.ctx().request_repaint_after(Duration::from_millis(50));
-
-        // Phase 4: rotate the active recording's .opus file when its
-        // per-file max-minutes cap is reached. No-op when no
-        // recording is active.
-        self.maybe_rotate_recording();
-
-        // Mirror the speaker router's current active program into
-        // AppState so the GUI's Now Playing panel (and every other
-        // reader of `active_idx()`) follows speaker switches without
-        // having to plumb a query through every call site. Falls
-        // back to `None` when no piped session is running so the
-        // panel naturally drops back to `selected_program`.
-        self.app_state.active_speaker = self.nrsc5.as_ref().and_then(|n| n.active_speaker());
-
-        // Mirror the per-subchannel decoded-state bitmap so the
-        // HD selector's toggle switches reflect reality (e.g. an
-        // `add_decoder` that failed against the cap, or one that
-        // exited on its own after losing its child process) instead
-        // of the user's last click intent. Reset to all-false when
-        // no session is running so toggling a stale "on" doesn't
-        // try to drive a dead backend.
-        let mut decoded = [false; 8];
-        if let Some(n) = self.nrsc5.as_ref() {
-            for p in n.decoded_programs() {
-                if (p as usize) < decoded.len() {
-                    decoded[p as usize] = true;
-                }
-            }
-        }
-        self.app_state.decoded = decoded;
-
-        // Drain events from the nrsc5 process. Cap the number processed
-        // per frame: when the window is minimized/occluded, Windows
-        // suspends painting so `update` stops running and events
-        // (metadata + LOT image payloads) pile up in the unbounded
-        // channel. Draining the whole backlog in a single frame on
-        // refocus froze the UI for seconds and, with a large image
-        // backlog, could exhaust memory during the texture-upload burst.
-        // A bounded batch keeps each frame cheap; if events remain we ask
-        // egui for another frame right away so catch-up stays prompt.
-        let mut more_events_pending = false;
-        if let Some(nrsc5) = &self.nrsc5 {
-            const MAX_EVENTS_PER_FRAME: usize = 128;
-            let mut pending = Vec::new();
-            while pending.len() < MAX_EVENTS_PER_FRAME {
-                match nrsc5.events().try_recv() {
-                    Ok(evt) => {
-                        // Tee MER / Sync / etc into the AGC controller
-                        // centrally. Used to live in each decoder's
-                        // libnrsc5 callback but moved here so AGC keeps
-                        // getting fed when the primary decoder is disabled
-                        // and so that starting on a non-HD1 program still
-                        // drives AGC.
-                        nrsc5.forward_event_to_agc(&evt);
-                        nrsc5.forward_event_to_handoff(&evt);
-                        pending.push(evt);
-                    }
-                    Err(_) => break,
-                }
-            }
-            more_events_pending = !nrsc5.events().is_empty();
-            for evt in pending {
-                self.app_state.last_event = evt.label().to_string();
-                self.handle_nrsc5_event(evt);
-            }
-            // Backlog left over (we hit the per-frame cap): keep the
-            // catch-up going without waiting for the next scheduled paint.
-            if more_events_pending {
-                ui.ctx().request_repaint();
-            }
-        }
-
-        // Collage refresh, deferred until the event backlog is drained.
-        // Cover-art ingest only marks the tiles dirty; the actual (expensive)
-        // relayout + art-cache disk write happens here. Crucially, while a
-        // large refocus catch-up is still draining we HOLD the relayout so
-        // the collage doesn't visibly step through hundreds of intermediate
-        // states (each one a relayout + texture churn + disk write) — instead
-        // it jumps straight to the final layout once we're caught up, and
-        // catch-up frames stay cheap. A 2-second fallback bounds how long the
-        // collage can look stale under a sustained cover-art flood.
-        if self.art_dirty {
-            let caught_up = !more_events_pending;
-            let stale = self
-                .last_art_rebuild_at
-                .map(|t| t.elapsed() >= Duration::from_secs(2))
-                .unwrap_or(true);
-            if caught_up || stale {
-                self.rebuild_art_tiles();
-                self.persist_art_history();
-                self.art_dirty = false;
-                self.last_art_rebuild_at = Some(Instant::now());
-            }
-        }
-
-        // Check if a background retune task finished.
-        if let Some(handle) = self.retune_task.as_ref() {
-            if handle.is_finished() {
-                let handle = self.retune_task.take().unwrap();
-                match handle.join() {
-                    Ok((backend, None)) => {
-                        self.nrsc5 = Some(backend);
-                        if let Some(n) = self.nrsc5.as_ref() {
-                            let ctx = ui.ctx().clone();
-                            n.set_repaint_waker(move || ctx.request_repaint());
-                        }
-                        self.app_state.is_streaming = true;
-                        self.start_requested_at = Some(Instant::now());
-                        self.app_state.nrsc5_status = format!(
-                            "retuned to {:.1} MHz (HD{})",
-                            self.app_state.frequency_mhz,
-                            self.app_state.selected_program + 1
-                        );
-                    }
-                    Ok((backend, Some(err_msg))) => {
-                        self.nrsc5 = Some(backend);
-                        if let Some(n) = self.nrsc5.as_ref() {
-                            let ctx = ui.ctx().clone();
-                            n.set_repaint_waker(move || ctx.request_repaint());
-                        }
-                        self.app_state.is_streaming = false;
-                        self.app_state.nrsc5_status = format!("retune failed: {err_msg}");
-                    }
-                    Err(_panic) => {
-                        self.app_state.nrsc5_status = "retune thread panicked".to_string();
-                    }
-                }
-            }
-        }
-
         // --- Hidden debug keyboard shortcut: set_active_speaker -----------
         // v0.5.1 collapsed multi-session decode to a single per-tune
         // session, so `add_decoder` / `remove_decoder` no longer exist;
@@ -1031,6 +899,157 @@ impl eframe::App for Nrsc5App {
 }
 
 impl Nrsc5App {
+    /// Drains the nrsc5 backend (new events: metadata, LOT image payloads,
+    /// weather/traffic overlays, ...), mirrors a few backend-owned bits of
+    /// state into `AppState`, and reaps a finished background retune task.
+    /// None of this paints anything, so unlike the code in `ui` it belongs
+    /// in `App::logic` — which, critically, keeps running every pass even
+    /// while the root window is invisible/minimized (see the doc comment
+    /// on `logic`). This used to all live at the top of `ui`, which meant
+    /// a minimized main window didn't just stop *painting* the dock, it
+    /// stopped *draining the backend entirely* — new weather/traffic
+    /// frames (and everything else here) piled up undelivered in the
+    /// event channel until the main window was restored, however long
+    /// that took. A popped-out Weather window staying visible while the
+    /// main window was minimized made that easy to see: new radar
+    /// overlays simply never arrived, and the animation could only ever
+    /// cycle through however many frames had already been drained before
+    /// the minimize.
+    fn process_backend_updates(&mut self, ctx: &egui::Context) {
+        self.update_runtime_metrics();
+        self.drain_sdr_refresh_results();
+        ctx.request_repaint_after(Duration::from_millis(50));
+
+        // Phase 4: rotate the active recording's .opus file when its
+        // per-file max-minutes cap is reached. No-op when no
+        // recording is active.
+        self.maybe_rotate_recording();
+
+        // Mirror the speaker router's current active program into
+        // AppState so the GUI's Now Playing panel (and every other
+        // reader of `active_idx()`) follows speaker switches without
+        // having to plumb a query through every call site. Falls
+        // back to `None` when no piped session is running so the
+        // panel naturally drops back to `selected_program`.
+        self.app_state.active_speaker = self.nrsc5.as_ref().and_then(|n| n.active_speaker());
+
+        // Mirror the per-subchannel decoded-state bitmap so the
+        // HD selector's toggle switches reflect reality (e.g. an
+        // `add_decoder` that failed against the cap, or one that
+        // exited on its own after losing its child process) instead
+        // of the user's last click intent. Reset to all-false when
+        // no session is running so toggling a stale "on" doesn't
+        // try to drive a dead backend.
+        let mut decoded = [false; 8];
+        if let Some(n) = self.nrsc5.as_ref() {
+            for p in n.decoded_programs() {
+                if (p as usize) < decoded.len() {
+                    decoded[p as usize] = true;
+                }
+            }
+        }
+        self.app_state.decoded = decoded;
+
+        // Drain events from the nrsc5 process. Cap the number processed
+        // per frame: when the window is minimized/occluded, Windows
+        // suspends painting so `update` stops running and events
+        // (metadata + LOT image payloads) pile up in the unbounded
+        // channel. Draining the whole backlog in a single frame on
+        // refocus froze the UI for seconds and, with a large image
+        // backlog, could exhaust memory during the texture-upload burst.
+        // A bounded batch keeps each frame cheap; if events remain we ask
+        // egui for another frame right away so catch-up stays prompt.
+        let mut more_events_pending = false;
+        if let Some(nrsc5) = &self.nrsc5 {
+            const MAX_EVENTS_PER_FRAME: usize = 128;
+            let mut pending = Vec::new();
+            while pending.len() < MAX_EVENTS_PER_FRAME {
+                match nrsc5.events().try_recv() {
+                    Ok(evt) => {
+                        // Tee MER / Sync / etc into the AGC controller
+                        // centrally. Used to live in each decoder's
+                        // libnrsc5 callback but moved here so AGC keeps
+                        // getting fed when the primary decoder is disabled
+                        // and so that starting on a non-HD1 program still
+                        // drives AGC.
+                        nrsc5.forward_event_to_agc(&evt);
+                        nrsc5.forward_event_to_handoff(&evt);
+                        pending.push(evt);
+                    }
+                    Err(_) => break,
+                }
+            }
+            more_events_pending = !nrsc5.events().is_empty();
+            for evt in pending {
+                self.app_state.last_event = evt.label().to_string();
+                self.handle_nrsc5_event(evt);
+            }
+            // Backlog left over (we hit the per-frame cap): keep the
+            // catch-up going without waiting for the next scheduled paint.
+            if more_events_pending {
+                ctx.request_repaint();
+            }
+        }
+
+        // Collage refresh, deferred until the event backlog is drained.
+        // Cover-art ingest only marks the tiles dirty; the actual (expensive)
+        // relayout + art-cache disk write happens here. Crucially, while a
+        // large refocus catch-up is still draining we HOLD the relayout so
+        // the collage doesn't visibly step through hundreds of intermediate
+        // states (each one a relayout + texture churn + disk write) — instead
+        // it jumps straight to the final layout once we're caught up, and
+        // catch-up frames stay cheap. A 2-second fallback bounds how long the
+        // collage can look stale under a sustained cover-art flood.
+        if self.art_dirty {
+            let caught_up = !more_events_pending;
+            let stale = self
+                .last_art_rebuild_at
+                .map(|t| t.elapsed() >= Duration::from_secs(2))
+                .unwrap_or(true);
+            if caught_up || stale {
+                self.rebuild_art_tiles();
+                self.persist_art_history();
+                self.art_dirty = false;
+                self.last_art_rebuild_at = Some(Instant::now());
+            }
+        }
+
+        // Check if a background retune task finished.
+        if let Some(handle) = self.retune_task.as_ref() {
+            if handle.is_finished() {
+                let handle = self.retune_task.take().unwrap();
+                match handle.join() {
+                    Ok((backend, None)) => {
+                        self.nrsc5 = Some(backend);
+                        if let Some(n) = self.nrsc5.as_ref() {
+                            let ctx = ctx.clone();
+                            n.set_repaint_waker(move || ctx.request_repaint());
+                        }
+                        self.app_state.is_streaming = true;
+                        self.start_requested_at = Some(Instant::now());
+                        self.app_state.nrsc5_status = format!(
+                            "retuned to {:.1} MHz (HD{})",
+                            self.app_state.frequency_mhz,
+                            self.app_state.selected_program + 1
+                        );
+                    }
+                    Ok((backend, Some(err_msg))) => {
+                        self.nrsc5 = Some(backend);
+                        if let Some(n) = self.nrsc5.as_ref() {
+                            let ctx = ctx.clone();
+                            n.set_repaint_waker(move || ctx.request_repaint());
+                        }
+                        self.app_state.is_streaming = false;
+                        self.app_state.nrsc5_status = format!("retune failed: {err_msg}");
+                    }
+                    Err(_panic) => {
+                        self.app_state.nrsc5_status = "retune thread panicked".to_string();
+                    }
+                }
+            }
+        }
+    }
+
     /// Copy the live UI state (frequency, subchannel, theme, volume, mute)
     /// into the persisted `AppConfig`. Called from both `save()` (eframe's
     /// periodic ~30 s auto-save) and `on_exit()`, plus a handful of eager
