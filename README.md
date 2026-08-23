@@ -8,16 +8,9 @@
 
 A native Windows and Linux desktop app for listening to **HD Radio** broadcasts with an RTL-SDR, SDRplay, or HackRF receiver. Built in Rust with [egui](https://www.egui.rs/), wrapped around the excellent [`nrsc5`](https://github.com/theori-io/nrsc5) HD Radio decoder.
 
-This fork of NRSC5-Studio supports OS-Level, dockable windows that can be moved anywhere outside of the main application, including separate displays. This is great for multi-monitor users.  To create a detachable window, just right-click on the tab of any window and you'll see a drop-down context menu that says "Open in New Window".
-
-<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/275c376b-089b-4d43-bfaf-cd6c7e5150c0" />
-
-This window can be dragged to any location including another display.
-
-To reattach it, click on the "Return to Dock" button:
-
-<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/c9607fcf-18c9-4c46-82f7-9628815772fb" />
-
+![Stars](https://img.shields.io/github/stars/LTCAshraven/nrsc5-studio?style=flat-square)
+![Forks](https://img.shields.io/github/forks/LTCAshraven/nrsc5-studio?style=flat-square)
+![Watchers](https://img.shields.io/github/watchers/LTCAshraven/nrsc5-studio?style=flat-square)
 
 ![Version](https://img.shields.io/badge/version-0.6.5-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green?style=flat-square)
@@ -28,6 +21,18 @@ To reattach it, click on the "Return to Dock" button:
 <sub>If you find this project useful, please consider giving it a [star on GitHub](https://github.com/LTCAshraven/nrsc5-studio) — it helps others discover it and keeps the feedback and development flowing! ⭐</sub>
 
 </div>
+
+---
+
+## Screenshots
+
+![NRSC5 Studio default layout](docs/screenshot01.png)
+
+*The default dock layout — Tuner, Now-Playing, Station Information, Spectrum, Constellation, Traffic, Weather, and the rolling Album-Art Collage all visible at once.*
+
+![NRSC5 Studio collage-focused layout](docs/screenshot02.png)
+
+*The egui-based dock is fully configurable: drag tabs into floating panes, close the ones you don't need, and feature the ones you do. Here the album-art collage takes center stage on a station that doesn't broadcast traffic or weather.*
 
 ---
 
@@ -53,6 +58,43 @@ To reattach it, click on the "Return to Dock" button:
 
 ---
 
+## Hardware requirements
+
+- An installed and working **SDR** with an antenna suitable for FM (87.5–108 MHz). Generic RTL2832U + R820T2 dongles are still the cheapest, most-tested option.
+- A nearby HD Radio FM broadcaster. (Most U.S. metro areas have several.)
+- Windows 10 or 11 (x86_64), or a Linux distribution recent enough to run a modern egui app (Debian 12+, Ubuntu 22.04+, Fedora 40+) on x86_64.
+- **Have a different SDR you'd like supported?** If it has a [SoapySDR](https://github.com/pothosware/SoapySDR) module, [open an issue](https://github.com/LTCAshraven/nrsc5-studio/issues) and I'll get right on it. It should be straightforward to add.
+
+### Supported SDRs (v0.3.0)
+
+NRSC5 Studio v0.3.0 introduces a unified [SoapySDR](https://github.com/pothosware/SoapySDR) backend so the same build supports multiple SDR families. Switch between them via the **hamburger menu → 📡 SDR Settings…**.
+
+| Device family       | Status        | Notes                                                                                          |
+|---------------------|---------------|------------------------------------------------------------------------------------------------|
+| RTL-SDR (R820T2)    | ✅ Validated   | Reference platform. Cheapest entry point.                                                       |
+| RTL-SDR (E4000)     | ✅ Validated   | Nooelec SmartXTR and similar. AGC drives `TUNER`; six other IF stages settable manually.        |
+| SDRplay RSP1A       | ✅ Validated   | 14-bit ADC, much wider dynamic range than RTL-SDR. **Requires SDRplay API v3.x** (see below).   |
+| SDRplay (other RSP) | 🟡 Should work | RSPduo / RSPdx use the same profile as RSP1A; bench-validation contributions welcome.            |
+| HackRF One          | 🟡 Profile-only | Profile ships but is not yet bench-validated. AGC drives `LNA`; report any issues you find.     |
+
+#### RTL-SDR (Zadig)
+
+If you don't already have working RTL-SDR drivers, install [Zadig](https://zadig.akeo.ie/) and follow the standard [WinUSB driver setup](https://www.rtl-sdr.com/rtl-sdr-quick-start-guide/) once before running NRSC5 Studio. This is the only end-user prerequisite for RTL-SDR support.
+
+#### SDRplay (proprietary API)
+
+SDRplay receivers (RSP1A, RSPduo, RSPdx, …) require the SDRplay API service to be installed separately. It's free but **cannot be redistributed** under SDRplay's license — so the portable zip ships only the open-source `libsdrPlaySupport.dll` bridge module. To use an SDRplay device:
+
+1. Download and install the **SDRplay API v3.x** from [sdrplay.com/downloads](https://www.sdrplay.com/downloads/).
+2. Plug in your SDRplay device.
+3. Launch NRSC5 Studio. Open **📡 SDR Settings…**, click **Refresh**, and pick the SDRplay entry.
+
+Users without an SDRplay device can ignore this entirely — the bundled module loads lazily.
+
+#### HackRF One
+
+HackRF support ships in v0.3.0 but is **not yet bench-validated**. The device profile (`LNA`, `VGA`, `AMP` gain stages) is conservative but may need tuning for HD Radio. If you have a HackRF and try it, opening an issue with your findings would be hugely appreciated.
+
 ### Remote SDRs (SoapyRemote and rtl_tcp)
 
 NRSC5 Studio can drive a remote SDR via one of two protocols, picked from the **Transport** row at the top of **📡 SDR Settings…**:
@@ -73,7 +115,7 @@ Configs from earlier 0.2.x / 0.3.x releases that used `use_rtl_tcp = true` are m
 1. Download the latest `nrsc5-studio-portable.zip` from the Releases page.
 2. Unzip it anywhere — `Documents`, `Program Files`, a USB stick, wherever.
 3. Plug in your RTL-SDR dongle.
-4. Run `nrsc5-studio-dockable.exe`.
+4. Run `nrsc5-studio.exe`.
 
 No installer, no registry edits, no admin rights required.
 
@@ -98,7 +140,7 @@ It's a pure drop-in upgrade: the app prefers `map2x.png` when it's present and s
 
 1. Download `map2x.png` from the [Releases page](https://github.com/LTCAshraven/nrsc5-studio/releases) assets (listed alongside the portable zip and Linux packages).
 2. Put it where the app looks for basemaps:
-   - **Windows (portable):** the `res\` folder next to `nrsc5-studio-dockable.exe` (i.e. `res\map2x.png`).
+   - **Windows (portable):** the `res\` folder next to `nrsc5-studio.exe` (i.e. `res\map2x.png`).
    - **Linux (.deb / .rpm):** `/usr/share/nrsc5-studio/map2x.png`.
 3. Restart NRSC5 Studio. The maps now render against the high-resolution basemap.
 
@@ -130,7 +172,7 @@ Every tune writes a short, human-readable trace of the closed-loop AGC's reasoni
 
 Location:
 
-- **Portable** (default for the released zip): `data\agc-trace.log` beside `nrsc5-studio-dockable.exe`.
+- **Portable** (default for the released zip): `data\agc-trace.log` beside `nrsc5-studio.exe`.
 - **Installed** (no `portable.txt` marker): `%LOCALAPPDATA%\nrsc5-studio\agc-trace.log`.
 
 Tail it live from PowerShell while tuning:
@@ -250,5 +292,49 @@ scripts/            PowerShell + bash build/package helpers
 packaging/          Debian, Fedora, and Linux desktop integration assets
 ```
 
+---
 
+## Credits
 
+NRSC5 Studio is a thin Rust GUI on top of a lot of excellent open-source work:
+
+- **[`nrsc5`](https://github.com/theori-io/nrsc5)** — the HD Radio decoder this app dynamically links against (`libnrsc5`). License: GPL-3.0.
+- **[`librtlsdr`](https://github.com/osmocom/rtl-sdr)** — RTL-SDR driver library, loaded via SoapySDR's RTL-SDR plugin. License: GPL-2.0-or-later.
+- **[`libusb`](https://libusb.info/)** — cross-platform USB I/O, used transitively by librtlsdr. License: LGPL-2.1-or-later.
+- **[`SoapySDR`](https://github.com/pothosware/SoapySDR)** — vendor-neutral SDR abstraction layer + RTL-SDR / HackRF / SDRplay plugin modules. License: Boost Software License 1.0 (core) / MIT (plugins).
+- **[`egui`](https://www.egui.rs/) / [`eframe`](https://github.com/emilk/egui)** — the immediate-mode GUI framework. License: MIT or Apache-2.0.
+- **[`egui_dock`](https://github.com/Adanos020/egui_dock)** — the dockable tab system. License: MIT.
+
+A complete list of third-party components and their licenses, including the corresponding-source URLs required by GPL-3.0 Section 6, is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
+## License
+
+- **The Rust source code in this repository is licensed under the [MIT License](LICENSE).** You're welcome to reuse it in your own projects under MIT terms.
+- **The distributed binary** (the executable in the Windows portable zip / Linux .deb / .rpm) **dynamically links against `libnrsc5` (GPL-3.0)** and is therefore a combined work licensed as a whole under GPL-3.0. The full GPL-3.0 license text is bundled in the release as `COPYING.GPL-3.0`. The corresponding source for every GPL/LGPL component is enumerated in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and available from this repository plus the upstream URLs listed there.
+
+In short: the source is MIT, the compiled binary is GPL-3.0. If you redistribute the binary you inherit the GPL-3.0 obligations from Section 6 (provide source, preserve the notices).
+
+---
+
+## Acknowledgments
+
+This project stands on the shoulders of the HD Radio reverse-engineering community — particularly:
+
+- **TheDaChicken / Argilo** — [`nrsc5`](https://github.com/theori-io/nrsc5), the HD Radio decoder this project links against.
+- **cmnybo** — [`nrsc5-gui`](https://github.com/cmnybo/nrsc5-gui).
+- **markjfine** — [`nrsc5-dui`](https://github.com/markjfine/nrsc5-dui).
+
+The GUI, persistence, dock layout, and integration work was developed in collaboration with GitHub Copilot.
+
+---
+
+## License
+
+NRSC5 Studio's own source code is released under the [MIT License](LICENSE).
+
+The portable distribution also bundles several third-party binaries that
+remain under their original licenses (GPL-2.0, GPL-3.0, and LGPL-2.1). Their
+full notices and upstream sources are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
