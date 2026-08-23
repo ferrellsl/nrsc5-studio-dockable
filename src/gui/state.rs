@@ -602,6 +602,89 @@ impl AppState {
         }
         out
     }
+
+    /// Pull fresh, backend-sourced data from `source` into `self`, while
+    /// preserving the handful of fields a tab's own rendering mutates
+    /// directly on whichever `AppState` it's handed (animation
+    /// playhead/timer state, in-progress inline edits, and per-tab
+    /// texture/generation caches) rather than clobbering them with
+    /// `source`'s copy.
+    ///
+    /// This exists for `Nrsc5App::render_popped_out_viewports`, which
+    /// refreshes the shared pop-out snapshot from the real `AppState` on
+    /// every pass (see its doc comment — that now happens far more often
+    /// than once per visible frame). A plain `*self = source.clone()`
+    /// there silently stomps whatever a popped-out tab's own render just
+    /// wrote into these fields a moment earlier. That's exactly what broke
+    /// the Weather tab's play/pause animation after the pop-out rewrite:
+    /// `weather_ui` (in `gui/dock.rs`) advances `weather_current_frame`
+    /// directly on the `AppState` it's handed, and every subsequent
+    /// refresh immediately overwrote that advance with the un-advanced
+    /// value still sitting in the *real* `AppState` — which never runs
+    /// `weather_ui` for a tab that's popped out, so it has nothing newer
+    /// to offer for these fields in the first place.
+    ///
+    /// None of the fields preserved here are ever written by backend or
+    /// event-handling code — only by the tab-rendering functions in
+    /// `gui/dock.rs` — so preserving them is always correct, not a
+    /// workaround: there is no fresher value on `source`'s side to lose.
+    /// `frequency_mhz` is deliberately *not* on this list even though
+    /// `tuner_ui`'s frequency `DragValue` also writes it directly — unlike
+    /// these fields, it's genuinely written from both sides (a confirmed
+    /// retune updates it on the real `AppState` too), so blanket-preserving
+    /// it here would stop a popped-out Tuner tab from ever seeing a retune
+    /// it just requested come back confirmed. It's left to overwrite from
+    /// `source` as before, which can very briefly visually reset a
+    /// still-in-progress drag if a refresh lands mid-gesture — a much
+    /// smaller and self-correcting glitch than an animation that never
+    /// advances at all.
+    ///
+    /// If you add a new field that a tab's rendering code mutates directly
+    /// on `self.app_state` (rather than by pushing a `UiCommand`), add it
+    /// here too — or better, route the mutation through `UiCommand`
+    /// instead, which is the architecturally preferred option (see
+    /// `CONTRIBUTING.md`'s note on one-way `App → AppState → DockViewer →
+    /// UiCommand → App` data flow) and sidesteps this class of bug
+    /// entirely.
+    pub fn refresh_from(&mut self, source: &AppState) {
+        let weather_current_frame = self.weather_current_frame;
+        let weather_playing = self.weather_playing;
+        let weather_last_advance = self.weather_last_advance;
+        let weather_texture = self.weather_texture.take();
+        let weather_texture_path = self.weather_texture_path.take();
+        let spectrum_texture = self.spectrum_texture.take();
+        let spectrum_last_drawn_generation = self.spectrum_last_drawn_generation;
+        let spectrum_snapshot = std::mem::take(&mut self.spectrum_snapshot);
+        let traffic_texture = self.traffic_texture.take();
+        let traffic_texture_path = self.traffic_texture_path.take();
+        let editing_preset = self.editing_preset.take();
+        let editing_preset_text = std::mem::take(&mut self.editing_preset_text);
+        let editing_preset_freq = self.editing_preset_freq;
+        let editing_preset_program = self.editing_preset_program;
+        let editing_preset_just_opened = self.editing_preset_just_opened;
+        let log_view_mode = self.log_view_mode;
+        let log_export_status = self.log_export_status.take();
+
+        *self = source.clone();
+
+        self.weather_current_frame = weather_current_frame;
+        self.weather_playing = weather_playing;
+        self.weather_last_advance = weather_last_advance;
+        self.weather_texture = weather_texture;
+        self.weather_texture_path = weather_texture_path;
+        self.spectrum_texture = spectrum_texture;
+        self.spectrum_last_drawn_generation = spectrum_last_drawn_generation;
+        self.spectrum_snapshot = spectrum_snapshot;
+        self.traffic_texture = traffic_texture;
+        self.traffic_texture_path = traffic_texture_path;
+        self.editing_preset = editing_preset;
+        self.editing_preset_text = editing_preset_text;
+        self.editing_preset_freq = editing_preset_freq;
+        self.editing_preset_program = editing_preset_program;
+        self.editing_preset_just_opened = editing_preset_just_opened;
+        self.log_view_mode = log_view_mode;
+        self.log_export_status = log_export_status;
+    }
 }
 
 /// Render mode for the Log tab — chronological list of every play, or a

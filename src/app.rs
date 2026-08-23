@@ -1190,12 +1190,10 @@ impl Nrsc5App {
         // Every deferred pop-out closure below reads through this shared,
         // thread-safe snapshot instead of borrowing `self` directly (which
         // its `Send + Sync + 'static` bound rules out — see `PopoutState`).
-        // Refreshed from the live state every time we get here so a
-        // pop-out repainting on its own schedule — in particular: while
-        // continuing to repaint on its own during the very window where
-        // the main viewport is minimized and this function isn't running
-        // at all — still sees reasonably fresh data from the last time it
-        // was.
+        // Refreshed from the live state on every pass (this now runs from
+        // `App::logic`, so that's far more often than once per visible
+        // frame — see this function's own doc comment) so a pop-out
+        // repainting on its own schedule still sees reasonably fresh data.
         if self.popout_state.is_none() {
             self.popout_state = Some(std::sync::Arc::new(std::sync::Mutex::new(PopoutState {
                 app_state: self.app_state.clone(),
@@ -1206,7 +1204,14 @@ impl Nrsc5App {
         let popout_state = self.popout_state.as_ref().unwrap().clone();
         {
             let mut snapshot = popout_state.lock().unwrap();
-            snapshot.app_state = self.app_state.clone();
+            // `refresh_from`, not a blanket `snapshot.app_state =
+            // self.app_state.clone()` — see its doc comment on
+            // `AppState`. A full overwrite here stomps any field a
+            // popped-out tab's own rendering just wrote directly onto
+            // this snapshot (the Weather tab's animation frame/timer
+            // being the case that surfaced this: overwriting it every
+            // pass meant `weather_current_frame` could never advance).
+            snapshot.app_state.refresh_from(&self.app_state);
             snapshot.presets = self.config.presets.clone();
             snapshot.play_log = self.play_log.clone();
         }
