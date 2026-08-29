@@ -105,15 +105,6 @@ By default the zip ships in **portable mode** (a `portable.txt` marker file live
 
 If you'd rather use the standard Windows convention (state under `%APPDATA%\nrsc5-studio\` and `%LOCALAPPDATA%\nrsc5-studio\`), delete `portable.txt` and relaunch.
 
-### Linux (`.deb` / `.rpm`)
-
-1. Download the `.deb` (Debian/Ubuntu) or `.rpm` (Fedora) from the Releases page.
-2. Install it with `sudo apt install ./nrsc5-studio_<version>_amd64.deb` or `sudo dnf install ./nrsc5-studio-<version>.x86_64.rpm`. The package depends on `libsoapysdr` and the SDR plugin you want (e.g. `soapysdr-module-rtlsdr`).
-3. Plug in your SDR. (On Debian/Ubuntu, RTL-SDR needs a udev rule and your user in the `plugdev` group — see [docs/linux-install.md](docs/linux-install.md).)
-4. Launch from your desktop menu or run `nrsc5-studio` from a terminal.
-
-Installed-mode state lives under `$XDG_DATA_HOME/nrsc5-studio/` (typically `~/.local/share/nrsc5-studio/`).
-
 ### Optional: high-resolution map basemap
 
 The Traffic and Weather maps draw their overlays on top of a US base-map image. The portable zip and the `.deb` / `.rpm` packages ship the standard **`map.png`** (6016 × 3456). A higher-resolution **`map2x.png`** (12032 × 6912 — four times the pixels) is available for sharper maps on large windows, but at ~57 MB it's distributed as a **separate download** rather than bundled.
@@ -130,34 +121,6 @@ To revert, just delete `map2x.png` — the app falls back to the bundled `map.pn
 
 ---
 
-## Quick start
-
-1. Launch the app. The **Tuner** pane is on the left.
-2. Type a frequency (e.g. `101.1`) and pick a subchannel (`HD1`–`HD8`). Subchannels the station advertises light up; the rest stay clickable in case you want to probe.
-3. Click the green **Start** button.
-4. After 5–15 seconds you should see signal lock and audio.
-5. Right-click any preset slot to save the current station to it; double-click to edit the label, frequency, and subchannel.
-
-Tips:
-
-- **Live signal lock** is reported in the top bar and on the Signal pane. MER lower/upper should be **≥ 8 dB** for clean HD audio; below that you'll hear audio dropouts.
-- **Station Information** populates as the SIS table rolls in — call sign and slogan are usually first (a few seconds), with country / FCC ID / location arriving over the next minute or two. Many U.S. stations never broadcast `Message` or `Alert`; that's the station, not the app.
-- **Tabs are draggable.** Pull a tab title bar off into its own floating sub-window, split panes, or close panes you don't need.
-- **Album-art collage** starts empty and grows as the station plays songs. After a couple of hours on a busy station you'll see real heat-map structure form.
-- **Weather radar** can take several minutes to receive a full frame even on a strong signal — that's a property of the broadcast, not the app. Will take several more minutes until enough of the frames change to show the animation.
-
----
-
-## AGC trace log (power users)
-
-Every tune writes a short, human-readable trace of the closed-loop AGC's reasoning to a single file, overwritten at the start of each new tune so it always reflects the most recent attempt. If you're curious *why* the AGC picked a particular gain, or want to confirm the cache is being honored, this is the file to look at.
-
-Location:
-
-- **Portable** (default for the released zip): `data\agc-trace.log` beside `nrsc5-studio.exe`.
-- **Installed** (no `portable.txt` marker): `%LOCALAPPDATA%\nrsc5-studio\agc-trace.log`.
-
-Tail it live from PowerShell while tuning:
 
 ```powershell
 # Portable layout (run from the unzipped folder):
@@ -167,22 +130,6 @@ Get-Content -Wait .\data\agc-trace.log
 Get-Content -Wait $env:LOCALAPPDATA\nrsc5-studio\agc-trace.log
 ```
 
-What you'll see:
-
-- A header naming the frequency, driver, antenna, and PPM correction.
-- A **cache HIT** or **cache MISS** line indicating whether a cached gain was reused.
-- One line per probe: current phase (`Coarse` / `Fine` / `Done`), probe number, current gain in dB and table index, the best-seen gain so far, and the reason the controller is moving (or holding).
-- A closing **SETTLED** or **BAILED** line with the final gain and best observed MER.
-
-The gain cache itself lives next door at `gain-cache.ron` (same directory) and has a 7-day TTL. Delete it to force a full cold search on every station.
-
-Logging silently no-ops if the data directory is read-only, so this can't break a normal run.
-
----
-
-## Building from source
-
-Most users won't need this — grab the portable zip and you're done. But if you want to hack on it, feel free!:
 
 ### Prerequisites
 
@@ -203,27 +150,11 @@ This installs the gnullvm Rust toolchain if missing, then produces `target\x86_6
 For a release build:
 
 ```powershell
-$env:PATH = "$env:USERPROFILE\.cargo\bin;$PWD\.toolchains\llvm-mingw-20260505-ucrt-x86_64\bin;$env:PATH"
-cargo +stable-x86_64-pc-windows-gnullvm build --release --target x86_64-pc-windows-gnullvm
-```
-
-### Package a portable zip
-
-```powershell
-.\scripts\package-portable.ps1
+.\scripts\cargo-gnu.ps1 -Configuration release
 ```
 
 Bundles the release exe with `bin\` runtime into `dist\nrsc5-studio-portable\`.
 
-### Linux build
-
-Linux builds use the system toolchain and SoapySDR packages. For an
-end-to-end pipeline (cargo build + `.deb` + `.rpm`) see
-[scripts/build-linux-release.sh](scripts/build-linux-release.sh). For
-Ubuntu 22.04.5 LTS bring-up instructions, see
-[docs/linux-ubuntu-bringup.md](docs/linux-ubuntu-bringup.md).
-
----
 
 ## Project structure
 
@@ -274,43 +205,7 @@ scripts/            PowerShell + bash build/package helpers
 packaging/          Debian, Fedora, and Linux desktop integration assets
 ```
 
----
 
-## Credits
-
-NRSC5 Studio is a thin Rust GUI on top of a lot of excellent open-source work:
-
-- **[`nrsc5`](https://github.com/theori-io/nrsc5)** — the HD Radio decoder this app dynamically links against (`libnrsc5`). License: GPL-3.0.
-- **[`librtlsdr`](https://github.com/osmocom/rtl-sdr)** — RTL-SDR driver library, loaded via SoapySDR's RTL-SDR plugin. License: GPL-2.0-or-later.
-- **[`libusb`](https://libusb.info/)** — cross-platform USB I/O, used transitively by librtlsdr. License: LGPL-2.1-or-later.
-- **[`SoapySDR`](https://github.com/pothosware/SoapySDR)** — vendor-neutral SDR abstraction layer + RTL-SDR / HackRF / SDRplay plugin modules. License: Boost Software License 1.0 (core) / MIT (plugins).
-- **[`egui`](https://www.egui.rs/) / [`eframe`](https://github.com/emilk/egui)** — the immediate-mode GUI framework. License: MIT or Apache-2.0.
-- **[`egui_dock`](https://github.com/Adanos020/egui_dock)** — the dockable tab system. License: MIT.
-
-A complete list of third-party components and their licenses, including the corresponding-source URLs required by GPL-3.0 Section 6, is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
----
-
-## License
-
-- **The Rust source code in this repository is licensed under the [MIT License](LICENSE).** You're welcome to reuse it in your own projects under MIT terms.
-- **The distributed binary** (the executable in the Windows portable zip / Linux .deb / .rpm) **dynamically links against `libnrsc5` (GPL-3.0)** and is therefore a combined work licensed as a whole under GPL-3.0. The full GPL-3.0 license text is bundled in the release as `COPYING.GPL-3.0`. The corresponding source for every GPL/LGPL component is enumerated in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and available from this repository plus the upstream URLs listed there.
-
-In short: the source is MIT, the compiled binary is GPL-3.0. If you redistribute the binary you inherit the GPL-3.0 obligations from Section 6 (provide source, preserve the notices).
-
----
-
-## Acknowledgments
-
-This project stands on the shoulders of the HD Radio reverse-engineering community — particularly:
-
-- **TheDaChicken / Argilo** — [`nrsc5`](https://github.com/theori-io/nrsc5), the HD Radio decoder this project links against.
-- **cmnybo** — [`nrsc5-gui`](https://github.com/cmnybo/nrsc5-gui).
-- **markjfine** — [`nrsc5-dui`](https://github.com/markjfine/nrsc5-dui).
-
-The GUI, persistence, dock layout, and integration work was developed in collaboration with GitHub Copilot.
-
----
 
 ## License
 
