@@ -155,58 +155,6 @@ For a release build:
 
 Bundles the release exe with `bin\` runtime into `dist\nrsc5-studio-portable\`.
 
-
-## Project structure
-
-```
-src/
-  main.rs           entry point, window/viewport setup
-  app.rs            top-level eframe app, event loop, command dispatch
-  lib.rs            crate root for the integration-test surface
-  icon.rs           procedurally-rendered broadcast-tower window icon
-  icon_render.rs    pre-rendered icon PNG generation for Linux packaging
-  config.rs         persisted user settings (presets, theme, volume, gain mode, transport, …)
-  paths.rs          portable vs installed path resolution (config, cache, AAS scratch, logs)
-  art_cache.rs      content-addressed on-disk cache for album art + station logos
-  play_log.rs       24-hour rolling song log + RFC-4180 CSV export, per-program dedup
-  station_info.rs   SIS table model (call sign, slogan, FCC ID, location, services, alerts)
-  sdr_detect.rs     SDR presence probe for the no-SDR overlay
-  ffi/
-    nrsc5_sys.rs    raw FFI bindings against nrsc5.h (v3.2.0)
-    api.rs          safe Rust wrapper around libnrsc5: Nrsc5Session, callback trampoline,
-                    typed NrscEvent / PcmSink — all project unsafe lives here
-    decoder.rs      per-program DecoderInstance + I/Q feeder thread
-    mod.rs          AGC driver thread, multi-decoder lifecycle (Nrsc5Process)
-  sdr/
-    mod.rs          trait Sdr + device discovery
-    soapy.rs        SoapySDR backend (RTL-SDR, SDRplay, HackRF, SoapyRemote)
-    rtltcp.rs       native rtl_tcp client (end-to-end Rust)
-    profile.rs      per-device gain tables, AGC element selection, sample-rate negotiation
-    iq_bus.rs       I/Q fan-out to decoder + spectrum tap + recorder
-    gain_cache.rs   7-day persistent per-station gain cache (RON)
-    resampler.rs    rubato wrapper for SDRplay's 2 Msps → 1.488375 Msps software resample
-  dsp/
-    agc.rs          closed-loop AGC controller (AmpProbe → Coarse → Fine search)
-    spectrum.rs     FFT-based spectrum tap feeding the waterfall + scope UI
-    mod.rs
-  audio/            cpal output stream + Windows COM per-process volume; Linux software gain
-  recorder/         96 kbps Opus session recorder (Ogg Opus, Vorbis tags, rotation)
-  collage/          album-art history + squarified-treemap layout
-  maps/             traffic + weather map composition (PNG outputs)
-  gui/
-    dock.rs         tab definitions and tab UIs (Tuner, Spectrum, Signal, Log, Collage, …)
-    state.rs        runtime state snapshot shared with the GUI
-    widgets.rs      shared egui widgets
-    mod.rs
-res/                config defaults, nrsc5.h header, weather base map
-bin/                bundled runtime: libnrsc5.dll, libSoapySDR.dll, librtlsdr.dll,
-                    libusb-1.0.dll, GCC/libunwind runtime, SoapySDR\modules0.8\*
-scripts/            PowerShell + bash build/package helpers
-packaging/          Debian, Fedora, and Linux desktop integration assets
-```
-
-
-
 ## License
 
 NRSC5 Studio's own source code is released under the [MIT License](LICENSE).
