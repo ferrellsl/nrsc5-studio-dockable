@@ -88,48 +88,6 @@ Pick the transport, enter the remote host and port, and press Start as usual. Th
 
 Configs from earlier 0.2.x / 0.3.x releases that used `use_rtl_tcp = true` are migrated automatically to `transport = "rtl_tcp_remote"` on first launch; the legacy keys are then dropped from `config.toml`.
 
----
-
-## Install (portable)
-
-### Windows
-
-1. Download the latest `nrsc5-studio-portable.zip` from the Releases page.
-2. Unzip it anywhere — `Documents`, `Program Files`, a USB stick, wherever.
-3. Plug in your RTL-SDR dongle.
-4. Run `nrsc5-studio.exe`.
-
-No installer, no registry edits, no admin rights required.
-
-By default the zip ships in **portable mode** (a `portable.txt` marker file lives next to the executable). In this mode the app keeps everything it writes — presets, theme, window layout, album-art cache, 24-hour song log, traffic/weather scratch — inside a `data\` folder beside the exe. Move the folder, the whole state moves with it. Plug the USB stick into a different Windows machine and it just works.
-
-If you'd rather use the standard Windows convention (state under `%APPDATA%\nrsc5-studio\` and `%LOCALAPPDATA%\nrsc5-studio\`), delete `portable.txt` and relaunch.
-
-### Optional: high-resolution map basemap
-
-The Traffic and Weather maps draw their overlays on top of a US base-map image. The portable zip and the `.deb` / `.rpm` packages ship the standard **`map.png`** (6016 × 3456). A higher-resolution **`map2x.png`** (12032 × 6912 — four times the pixels) is available for sharper maps on large windows, but at ~57 MB it's distributed as a **separate download** rather than bundled.
-
-It's a pure drop-in upgrade: the app prefers `map2x.png` when it's present and silently falls back to the standard `map.png` when it isn't. Nothing to configure.
-
-1. Download `map2x.png` from the [Releases page](https://github.com/LTCAshraven/nrsc5-studio/releases) assets (listed alongside the portable zip and Linux packages).
-2. Put it where the app looks for basemaps:
-   - **Windows (portable):** the `res\` folder next to `nrsc5-studio.exe` (i.e. `res\map2x.png`).
-   - **Linux (.deb / .rpm):** `/usr/share/nrsc5-studio/map2x.png`.
-3. Restart NRSC5 Studio. The maps now render against the high-resolution basemap.
-
-To revert, just delete `map2x.png` — the app falls back to the bundled `map.png` on the next launch.
-
----
-
-
-```powershell
-# Portable layout (run from the unzipped folder):
-Get-Content -Wait .\data\agc-trace.log
-
-# Installed layout:
-Get-Content -Wait $env:LOCALAPPDATA\nrsc5-studio\agc-trace.log
-```
-
 
 ### Prerequisites
 
