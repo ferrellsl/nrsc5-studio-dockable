@@ -111,12 +111,6 @@ For a release build:
 .\scripts\cargo-gnu.ps1 -Configuration release
 ```
 
-Bundles the release exe with `bin\` runtime into `dist\nrsc5-studio-portable\`.
-
-## License
-
-NRSC5 Studio's own source code is released under the [MIT License](LICENSE).
-
 The portable distribution also bundles several third-party binaries that
 remain under their original licenses (GPL-2.0, GPL-3.0, and LGPL-2.1). Their
 full notices and upstream sources are listed in
